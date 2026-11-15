@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Break Timer</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #22c55e;
+    --danger: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2rem;
+    padding: 16px;
+    transition: background-color .4s;
+  }
+  body.overtime { background: #450a0a; }
+
+  h1 {
+    margin: 0;
+    font-size: clamp(1.2rem, 3vw, 2rem);
+    font-weight: 600;
+    color: var(--muted);
+    letter-spacing: .05em;
+    text-transform: uppercase;
+  }
+  body.overtime h1 { color: #fecaca; }
+
+  #display {
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    font-size: clamp(5rem, 22vw, 18rem);
+    line-height: 1;
+    transition: color .4s;
+  }
+  body.overtime #display {
+    color: var(--danger);
+    animation: pulse 1s ease-in-out infinite;
+  }
+  @keyframes pulse { 50% { opacity: .55; } }
+
+  .settings {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    font-size: 1.1rem;
+    color: var(--muted);
+  }
+  .settings input {
+    width: 5rem;
+    padding: .5rem;
+    font-size: 1.1rem;
+    text-align: center;
+    border-radius: 8px;
+    border: 1px solid #334155;
+    background: var(--panel);
+    color: var(--text);
+  }
+  .settings input:disabled { opacity: .5; }
+
+  .controls { display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center; }
+  button {
+    font-size: 1.25rem;
+    font-weight: 600;
+    padding: .9rem 2.5rem;
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    color: #fff;
+    transition: transform .1s, opacity .2s;
+  }
+  button:active { transform: scale(.97); }
+  button:disabled { opacity: .35; cursor: not-allowed; }
+  #startStop { background: var(--accent); min-width: 10rem; }
+  #startStop.running { background: var(--danger); }
+  #reset { background: #475569; }
+
+  .hint { color: var(--muted); font-size: .9rem; }
+</style>
+</head>
+<body>
+  <h1 id="status">Break time</h1>
+  <div id="display">10:00</div>
+
+  <label class="settings">
+    Break length
+    <input id="minutes" type="number" min="1" max="180" step="1" value="10">
+    minutes
+  </label>
+
+  <div class="controls">
+    <button id="startStop">Start</button>
+    <button id="reset">Reset</button>
+  </div>
+
+  <div class="hint">Space = Start / Stop</div>
+
+<script>
+  const DEFAULT_MINUTES = 10;
+
+  const display = document.getElementById('display');
+  const status = document.getElementById('status');
+  const minutesInput = document.getElementById('minutes');
+  const startStopBtn = document.getElementById('startStop');
+  const resetBtn = document.getElementById('reset');
+
+  let durationMs = DEFAULT_MINUTES * 60 * 1000;
+  let elapsedBeforeStart = 0;   // ms accumulated before the current run
+  let startedAt = null;         // timestamp of current run, null when stopped
+  let tickHandle = null;
+  let chimed = false;
+
+  function elapsed() {
+    return elapsedBeforeStart + (startedAt ? Date.now() - startedAt : 0);
+  }
+
+  function format(ms) {
+    const totalSeconds = Math.floor(ms / 1000);
+    const m = Math.floor(totalSeconds / 60);
+    const s = totalSeconds % 60;
+    return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  }
+
+  function render() {
+    const remaining = durationMs - elapsed();
+    const overtime = remaining <= 0;
+
+    if (overtime) {
+      // Count up past zero until the trainer stops the clock.
+      display.textContent = '+' + format(-remaining);
+      status.textContent = 'Break is over!';
+      if (!chimed && startedAt) { chime(); chimed = true; }
+    } else {
+      // Round up so the display shows 10:00 at start and hits 00:00 exactly at the end.
+      display.textContent = format(Math.ceil(remaining / 1000) * 1000);
+      status.textContent = startedAt ? 'Break time' : (elapsed() > 0 ? 'Paused' : 'Break time');
+    }
+    document.body.classList.toggle('overtime', overtime);
+    document.title = (overtime ? '⏰ ' : '') + display.textContent + ' · Break Timer';
+  }
+
+  function start() {
+    startedAt = Date.now();
+    tickHandle = setInterval(render, 200);
+    startStopBtn.textContent = 'Stop';
+    startStopBtn.classList.add('running');
+    minutesInput.disabled = true;
+    render();
+  }
+
+  function stop() {
+    elapsedBeforeStart = elapsed();
+    startedAt = null;
+    clearInterval(tickHandle);
+    startStopBtn.textContent = 'Start';
+    startStopBtn.classList.remove('running');
+    render();
+  }
+
+  function reset() {
+    if (startedAt) stop();
+    elapsedBeforeStart = 0;
+    chimed = false;
+    minutesInput.disabled = false;
+    render();
+  }
+
+  function setDuration() {
+    const mins = Math.max(1, Math.min(180, parseInt(minutesInput.value, 10) || DEFAULT_MINUTES));
+    durationMs = mins * 60 * 1000;
+    if (!startedAt && elapsedBeforeStart === 0) render();
+  }
+
+  // Short three-beep alert using Web Audio (no external files needed).
+  function chime() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      [0, 0.35, 0.7].forEach(offset => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.frequency.value = 880;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        const t = ctx.currentTime + offset;
+        gain.gain.setValueAtTime(0.0001, t);
+        gain.gain.exponentialRampToValueAtTime(0.4, t + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.25);
+        osc.start(t);
+        osc.stop(t + 0.3);
+      });
+    } catch (e) { /* audio not available */ }
+  }
+
+  startStopBtn.addEventListener('click', () => (startedAt ? stop() : start()));
+  resetBtn.addEventListener('click', reset);
+  minutesInput.addEventListener('input', setDuration);
+  minutesInput.addEventListener('change', () => {
+    setDuration();
+    minutesInput.value = durationMs / 60000;
+  });
+  document.addEventListener('keydown', e => {
+    // Focused buttons already handle Space natively; skip them to avoid a double toggle.
+    if (e.code === 'Space' && e.target !== minutesInput && e.target.tagName !== 'BUTTON') {
+      e.preventDefault();
+      startedAt ? stop() : start();
+    }
+  });
+
+  render();
+</script>
+</body>
+</html>
